@@ -216,7 +216,7 @@ class odometryThread(threading.Thread):
 		self.seconds = 0.03  # time interval in which odometry is checked
 		self.mutex = mutex
 
-		self.doPublishOdom = False
+		self.doPublishOdom = True
 		self.doPublishImu = True
 		self.doPublishEncoders = True
 
@@ -501,6 +501,7 @@ class ReadControls(threading.Thread):
 			#print 'sending command', cmd
 			motor1 = struct.pack('h', cmd[1])
 			motor2 = struct.pack('h', cmd[0])
+			ser.write('SX')
 			ser.write( motor1 )
 			ser.write( motor2 )
 			sleep(0.1)

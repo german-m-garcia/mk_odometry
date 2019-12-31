@@ -6,4 +6,7 @@
   </description>
   <maintainer email="german.m.garcia@gmail.com">German Martin</maintainer>
   <license>BSD</license>
+
+  <build_depend>message_generation</build_depend>
+  <exec_depend>message_runtime</exec_depend>
 </package>

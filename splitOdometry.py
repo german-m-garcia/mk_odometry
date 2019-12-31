@@ -23,8 +23,7 @@ import PyKDL as kdl
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Point, Quaternion
 from gamecontrol.msg import Motioncmd
-from std_msgs.msg import Int16
-
+from odometry.msg import Encoder
 
 from sensor_msgs.msg import Imu
 from sensor_msgs.msg import Joy
@@ -105,8 +104,8 @@ class RosOdomPublisher:
 		
 		self.odom_pub = rospy.Publisher('/makeblock/odom', Odometry, queue_size=10)
 		self.imu_pub = rospy.Publisher('/makeblock/imu', Imu, queue_size=10)
-		self.lwheel_pub = rospy.Publisher('/makeblock/lwheel', Int16, queue_size=10)
-		self.rwheel_pub = rospy.Publisher('/makeblock/rwheel', Int16, queue_size=10)
+		self.lwheel_pub = rospy.Publisher('/makeblock/lwheel', Encoder, queue_size=10)
+		self.rwheel_pub = rospy.Publisher('/makeblock/rwheel', Encoder, queue_size=10)
 		self.tf_br = tf.TransformBroadcaster()
 
 		self.publish_odom_tf = False
@@ -117,13 +116,18 @@ class RosOdomPublisher:
 		self.vx = self.vy = self.x = self.y = self.z = 0
 		self.w = self.theta = 0
 
-		self.encoder_msg_l = Int16()
-		self.encoder_msg_r = Int16()
+		self.encoder_msg_l = Encoder()
+		self.encoder_msg_r = Encoder()
 		
 	def publish_wheel_encoders(self, rwheel, lwheel):
 
-		self.encoder_msg_l.data = lwheel
-		self.encoder_msg_r.data = rwheel
+		self.encoder_msg_l.ticks = lwheel
+		self.encoder_msg_r.ticks = rwheel
+		
+		self.encoder_msg_l.header.stamp = rospy.Time.now()
+		self.encoder_msg_r.header.stamp = self.encoder_msg_l.header.stamp
+		self.encoder_msg_l.header.frame_id = 'lwheel'
+		self.encoder_msg_r.header.frame_id = 'rwheel'
 
 		self.lwheel_pub.publish(self.encoder_msg_l)
 		self.rwheel_pub.publish(self.encoder_msg_r)

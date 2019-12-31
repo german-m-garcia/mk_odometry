@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(odometry)
+project(mk_odometry)
 find_package(catkin REQUIRED
             rospy
             std_msgs

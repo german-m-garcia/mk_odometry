@@ -358,6 +358,8 @@ class encoderThread (threading.Thread):
 		self.serial = serial
 		self.encoder1 = 0
 		self.encoder2 = 0
+		self.speed1 = 0
+		self.speed2 = 0
 		self.roll = 0.
 		self.pitch = 0.
 		self.yaw = 0.
@@ -398,9 +400,17 @@ class encoderThread (threading.Thread):
 		while n < 4:
 			n = ser.inWaiting()
 		data = ser.read(4)
-		return struct.unpack('B', data[0])[0]
+		return struct.unpack('i', data)[0]
 
 	def readAngle(self):
+		typedata = ser.read(1)
+		n = ser.inWaiting()
+		while n < 4:
+			n = ser.inWaiting()
+		angle = ser.read(4)
+		return struct.unpack('f', angle)[0]
+
+	def readVelocity(self):
 		typedata = ser.read(1)
 		n = ser.inWaiting()
 		while n < 4:
@@ -423,6 +433,11 @@ class encoderThread (threading.Thread):
 				self.mutex.release()
 
 				self.mutex.acquire()
+				self.speed1 = self.readVelocity()
+				self.speed2 = self.readVelocity()
+				self.mutex.release()
+
+				self.mutex.acquire()
 				self.roll = self.readAngle()
 				self.pitch = self.readAngle()
 				cur_yaw = self.readAngle()
@@ -433,6 +448,9 @@ class encoderThread (threading.Thread):
 					update_yaw = 0.0
 				self.yaw = self.yaw + update_yaw
 				self.last_yaw = cur_yaw
+
+				#print self.encoder1, self.encoder2
+				#print self.speed1, self.speed2
 
 			#sleep(0.01)
 
@@ -468,7 +486,6 @@ class ReadControls(threading.Thread):
 		
 		self.last_received = rospy.Time.now()
 		(rightOut, leftOut) = joystickToDiff(msg.axes[1], msg.axes[0], -1, 1, -self.max_speed, self.max_speed)
-		
 		self.mutex.acquire()
 		self.x = int(leftOut)
 		self.y = int(rightOut)
@@ -485,7 +502,7 @@ class ReadControls(threading.Thread):
 		while n < 4:
 			n = ser.inWaiting()
 		data = ser.read(4)
-		return struct.unpack('B', data[0])[0]
+		return struct.unpack('i', data)[0]
 
 	def readAngle(self):
 		typedata = ser.read(1)
@@ -494,7 +511,6 @@ class ReadControls(threading.Thread):
 			n = ser.inWaiting()
 		angle = ser.read(4)
 		return struct.unpack('f', angle)[0]
-
 
 	def run(self):
 		while not rospy.is_shutdown():

@@ -217,12 +217,12 @@ class odometryThread(threading.Thread):
 		self.sched = Scheduler()
 		self.sched.start()        # start the scheduler
 		self.encoder = encoder		
-		self.lastEncoder1 = 0
-		self.lastEncoder2 = 0
-		self.tics1 = 0
-		self.tics2 = 0
-		self.accTics1 = 0
-		self.accTics2 = 0
+		self.last_encoder_right = 0
+		self.last_encoder_left = 0
+		self.ticks_right = 0
+		self.ticks_left = 0
+		self.acc_ticks_right = 0
+		self.acc_ticks_left = 0
 		self.lower_bound = 0
 		self.upper_bound = 0
 		self.encoder_min = -32768
@@ -230,9 +230,9 @@ class odometryThread(threading.Thread):
 		self.seconds = 0.03  # time interval in which odometry is checked
 		self.mutex = mutex
 
-		self.doPublishOdom = True
-		self.doPublishImu = True
-		self.doPublishEncoders = True
+		self.doPublishOdom = rospy.get_param('publish_odom', True)
+		self.doPublishImu = rospy.get_param('publish_imu', True)
+		self.doPublishEncoders = rospy.get_param('publish_encoders', True)
 
 		logging.basicConfig()
 
@@ -280,28 +280,28 @@ class odometryThread(threading.Thread):
 		self.mutex.release()
 
 		self.mutex.acquire()
-		curEnc1 = self.encoder.getEnc1()
-		curEnc2 = self.encoder.getEnc2()
+		cur_encoder_right = self.encoder.getEnc1()
+		cur_encoder_left = self.encoder.getEnc2()
 		self.mutex.release()
 
-		# overflow
-		if curEnc1 < self.lower_bound and self.lastEncoder1 > self.upper_bound:
-			self.accTics1 = self.accTics1 + 1
+		# overflow left wheel
+		if cur_encoder_right < self.lower_bound and self.last_encoder_right > self.upper_bound:
+			self.acc_ticks_right = self.acc_ticks_right + 1
 		# underflow
-		if curEnc1 > self.upper_bound and self.lastEncoder1 < self.lower_bound:
-			self.accTics1 = self.accTics1 - 1
+		if cur_encoder_right > self.upper_bound and self.last_encoder_right < self.lower_bound:
+			self.acc_ticks_right = self.acc_ticks_right - 1
 		
-		# overflow
-		if curEnc2 < self.lower_bound and self.lastEncoder2 > self.upper_bound:
-			self.accTics2 = self.accTics2 + 1
+		# overflow right wheel
+		if cur_encoder_left < self.lower_bound and self.last_encoder_left > self.upper_bound:
+			self.acc_ticks_left = self.acc_ticks_left + 1
 		# underflow
-		if curEnc2 > self.upper_bound and self.lastEncoder2 < self.lower_bound:
-			self.accTics2 = self.accTics2 - 1
+		if cur_encoder_left > self.upper_bound and self.last_encoder_left < self.lower_bound:
+			self.acc_ticks_left = self.acc_ticks_left - 1
 
-		self.tics1 = (curEnc1 + self.accTics1 * (self.encoder_max - self.encoder_min) )
-		self.lastEncoder1 = curEnc1
-		self.tics2 = (curEnc2 + self.accTics2 * (self.encoder_max - self.encoder_min) )
-		self.lastEncoder2 = curEnc2
+		self.ticks_right = (cur_encoder_right + self.acc_ticks_right * (self.encoder_max - self.encoder_min) )
+		self.last_encoder_right = cur_encoder_right
+		self.ticks_left = (cur_encoder_left + self.acc_ticks_left * (self.encoder_max - self.encoder_min) )
+		self.last_encoder_left = cur_encoder_left
 		
 		self.updateOdometry()
 
@@ -310,20 +310,20 @@ class odometryThread(threading.Thread):
 		if self.doPublishImu:
 			self.rosOdometry.publish_imu(self.roll, self.pitch, self.yaw, self.imu_vroll, self.imu_vpitch, self.imu_vyaw)
 		if self.doPublishEncoders:
-			self.rosOdometry.publish_wheel_encoders(curEnc1, curEnc2)
+			self.rosOdometry.publish_wheel_encoders(self.ticks_right, self.ticks_left)
 		
 	def rotating(self):
-		if self.tics1 > 0 and self.tics2> 0:
+		if self.ticks_right > 0 and self.ticks_left> 0:
 			return True
-		if self.tics1 < 0 and self.tics2 < 0:
+		if self.ticks_right < 0 and self.ticks_left < 0:
 			return True
 		return False
 		
 	
 	def updateOdometry(self):
 		
-		delta_Ur = self.m_tic * self.tics1
-		delta_Ul = self.m_tic * self.tics2
+		delta_Ur = self.m_tic * self.ticks_right
+		delta_Ul = self.m_tic * self.ticks_left
 		delta_Ui = (delta_Ul+delta_Ur)/2.
 		delta_theta = (delta_Ur-delta_Ul)/self.b
 
@@ -395,9 +395,6 @@ class encoderThread (threading.Thread):
 
 	def getYaw(self):
 		return self.yaw
-
-	def addTics(self):
-		self.lastEncoder1 = self.encoder1
 
 
 	# returns encoder value read from serial

@@ -1,5 +1,11 @@
 #!/usr/bin/env python
 
+"""
+mk_odometry: connects to the Auriga Board and reads encoder ticks. Calculates odometry and publishes
+it as ROS messages.
+
+"""
+
 import sys
 import select
 import serial
@@ -23,7 +29,7 @@ import PyKDL as kdl
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Point, Quaternion
 from gamecontrol.msg import Motioncmd
-from odometry.msg import Encoder
+from mk_odometry.msg import Encoder
 
 from sensor_msgs.msg import Imu
 from sensor_msgs.msg import Joy
@@ -217,6 +223,10 @@ class odometryThread(threading.Thread):
 		self.tics2 = 0
 		self.accTics1 = 0
 		self.accTics2 = 0
+		self.lower_bound = 0
+		self.upper_bound = 0
+		self.encoder_min = -32768
+		self.encoder_max = 32768
 		self.seconds = 0.03  # time interval in which odometry is checked
 		self.mutex = mutex
 
@@ -225,6 +235,10 @@ class odometryThread(threading.Thread):
 		self.doPublishEncoders = True
 
 		logging.basicConfig()
+
+		# encoder overflow values
+		self.lower_bound = (self.encoder_max - self.encoder_min) * 0.2 + self.encoder_min
+		self.upper_bound = (self.encoder_max - self.encoder_min ) * 0.8 + self.encoder_min
 
 		
 		# wheel odometry: pose=(x,y,theta)
@@ -270,31 +284,24 @@ class odometryThread(threading.Thread):
 		curEnc2 = self.encoder.getEnc2()
 		self.mutex.release()
 
-		if abs(curEnc1 - self.lastEncoder1) > 122:
-			if curEnc1 > 122:
-				tmp = curEnc1 - 256
-			else:
-				tmp = 256 -curEnc1
-		else:
-			tmp = curEnc1
-		self.tics1 = -(tmp - self.lastEncoder1) 
+		# overflow
+		if curEnc1 < self.lower_bound and self.lastEncoder1 > self.upper_bound:
+			self.accTics1 = self.accTics1 + 1
+		# underflow
+		if curEnc1 > self.upper_bound and self.lastEncoder1 < self.lower_bound:
+			self.accTics1 = self.accTics1 - 1
+		
+		# overflow
+		if curEnc2 < self.lower_bound and self.lastEncoder2 > self.upper_bound:
+			self.accTics2 = self.accTics2 + 1
+		# underflow
+		if curEnc2 > self.upper_bound and self.lastEncoder2 < self.lower_bound:
+			self.accTics2 = self.accTics2 - 1
+
+		self.tics1 = (curEnc1 + self.accTics1 * (self.encoder_max - self.encoder_min) )
 		self.lastEncoder1 = curEnc1
-
-		
-		if abs(curEnc2 - self.lastEncoder2) > 122:
-			if curEnc2 > 122:
-				tmp = curEnc2 - 256
-			else:
-				tmp = 256 - curEnc2
-		else:
-			tmp = curEnc2
-		self.tics2 = (tmp - self.lastEncoder2)
+		self.tics2 = (curEnc2 + self.accTics2 * (self.encoder_max - self.encoder_min) )
 		self.lastEncoder2 = curEnc2
-
-		#update the accumulated tics
-		self.accTics1 = self.accTics1 + self.tics1
-		self.accTics2 = self.accTics2 + self.tics2 
-		
 		
 		self.updateOdometry()
 
@@ -418,15 +425,14 @@ class encoderThread (threading.Thread):
 		angle = ser.read(4)
 		return struct.unpack('f', angle)[0]
 
-	#def readAngleTuple():
-
-
 
 	def run(self):
 		while not rospy.is_shutdown():
 
 			n = ser.inWaiting()
+			
 			if n > 0:
+
 				self.mutex.acquire()
 				self.encoder1 = self.readEncoder()
 				self.encoder2 = self.readEncoder()
@@ -450,7 +456,8 @@ class encoderThread (threading.Thread):
 				self.last_yaw = cur_yaw
 
 				#print self.encoder1, self.encoder2
-				#print self.speed1, self.speed2
+				#print 'speeds=', self.speed1, self.speed2
+				
 
 			#sleep(0.01)
 
@@ -464,18 +471,18 @@ class ReadControls(threading.Thread):
 		self.sched.start()        # start the scheduler
 		self.x = 0
 		self.y = 0
-		self.max_speed = 125
+		self.max_speed = 180
 		self.subscriber = rospy.Subscriber("/joy", Joy, self.callback)
 		self.last_received = rospy.Time.now()
 		self.mutex = Lock()
 		#check whether no command has been received
-		job = self.sched.add_interval_job(self.check_commands, seconds=1.0, args=[])
+		job = self.sched.add_interval_job(self.check_commands, seconds=0.2, args=[])
 		#job2 = self.sched.add_interval_job(self.sendMotionCommand, seconds = 1.5, args=[])
 
 	
 	def check_commands(self):
 		now = rospy.Time.now()
-		if now - self.last_received > 1000:
+		if now - self.last_received > 100:
 			self.mutex.acquire()
 			self.x = 0
 			self.y = 0
@@ -485,7 +492,9 @@ class ReadControls(threading.Thread):
 	def callback(self,msg):
 		
 		self.last_received = rospy.Time.now()
+		#print msg.axes
 		(rightOut, leftOut) = joystickToDiff(msg.axes[1], msg.axes[0], -1, 1, -self.max_speed, self.max_speed)
+		#print 'rightMotor, leftMotor=', rightOut, leftOut
 		self.mutex.acquire()
 		self.x = int(leftOut)
 		self.y = int(rightOut)
@@ -518,14 +527,14 @@ class ReadControls(threading.Thread):
 			cmd = self.getCommand()
 			#cmd = (+125, +125)
 			self.mutex.release()
-			#print 'sending command', cmd
 			motor1 = struct.pack('h', cmd[1])
 			motor2 = struct.pack('h', cmd[0])
+
 			ser.write('SX')
 			ser.write( motor1 )
 			ser.write( motor2 )
-			sleep(0.1)
-			
+			sleep(0.03)
+
 
 
 

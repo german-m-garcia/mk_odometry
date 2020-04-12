@@ -27,7 +27,7 @@ import tf
 import PyKDL as kdl
 # Messages
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Point, Quaternion
+from geometry_msgs.msg import Point, Quaternion, Twist
 from gamecontrol.msg import Motioncmd
 from mk_odometry.msg import Encoder
 
@@ -210,7 +210,7 @@ sign = lambda a: (a>0) - (a<0)
 reads the encoder values periocally and publishes the estimated odometry
 """
 class odometryThread(threading.Thread):
-	def __init__(self,threadID, name,encoder,rosOdomPublisher, mutex):
+	def __init__(self,threadID, name,encoder,rosOdomPublisher, mutex, axle, m_tic):
 		threading.Thread.__init__(self)
 		self.threadID = threadID
 		self.name = name
@@ -234,6 +234,11 @@ class odometryThread(threading.Thread):
 		self.doPublishImu = rospy.get_param('publish_imu', True)
 		self.doPublishEncoders = rospy.get_param('publish_encoders', True)
 
+		# tf broadcaster
+		self.base_link = "base_link"
+		self.odometry_frame = "odometry"
+		self.br = tf.TransformBroadcaster()
+
 		logging.basicConfig()
 
 		# encoder overflow values
@@ -242,12 +247,14 @@ class odometryThread(threading.Thread):
 
 		
 		# wheel odometry: pose=(x,y,theta)
-		self.m_tic = 0.00038 # empirical value meters per tic | 2pi*0.04 / 255 =  0.00098559769
-		self.b = 0.174 # wheels separation; should be read from urdf or config file
+		self.m_tic = m_tic # empirical value meters per tic | 2pi*0.04 / 255 =  0.00098559769
+		self.b = axle # wheels separation; should be read from urdf or config file
 		self.x = 0.
 		self.y = 0.
 		self.theta = 0.
 		self.last_theta = 0.
+		self.last_ticks_right_odometry = 0
+		self.last_ticks_left_odometry = 0
 			
 		
 		# wheel velocities
@@ -280,7 +287,7 @@ class odometryThread(threading.Thread):
 		self.mutex.release()
 
 		self.mutex.acquire()
-		cur_encoder_right = self.encoder.getEnc1()
+		cur_encoder_right = -self.encoder.getEnc1()
 		cur_encoder_left = self.encoder.getEnc2()
 		self.mutex.release()
 
@@ -306,7 +313,14 @@ class odometryThread(threading.Thread):
 		self.updateOdometry()
 
 		if self.doPublishOdom:
-			self.rosOdometry.publish_odom(self.x,self.y,self.theta, self.vx, self.vy, self.w)
+			self.rosOdometry.publish_odom(self.x, self.y, self.theta, self.vx, self.vy, self.w)
+			
+			self.br.sendTransform((self.x, self.y, 0),
+                        tf.transformations.quaternion_from_euler(0, 0, self.theta),
+                        rospy.Time.now(),
+                        self.base_link,
+                        self.odometry_frame)
+
 		if self.doPublishImu:
 			self.rosOdometry.publish_imu(self.roll, self.pitch, self.yaw, self.imu_vroll, self.imu_vpitch, self.imu_vyaw)
 		if self.doPublishEncoders:
@@ -322,11 +336,12 @@ class odometryThread(threading.Thread):
 	
 	def updateOdometry(self):
 		
-		delta_Ur = self.m_tic * self.ticks_right
-		delta_Ul = self.m_tic * self.ticks_left
+		delta_Ur = self.m_tic * ( self.ticks_right - self.last_ticks_right_odometry )
+		delta_Ul = self.m_tic * ( self.ticks_left - self.last_ticks_left_odometry )
+		self.last_ticks_right_odometry = self.ticks_right
+		self.last_ticks_left_odometry =  self.ticks_left
 		delta_Ui = (delta_Ul+delta_Ur)/2.
 		delta_theta = (delta_Ur-delta_Ul)/self.b
-
 
 		self.x = self.x + delta_Ui * math.cos(self.theta)
 		self.y = self.y + delta_Ui * math.sin(self.theta)
@@ -460,7 +475,7 @@ class encoderThread (threading.Thread):
 
 class ReadControls(threading.Thread):
 
-	def __init__(self, threadID, name):
+	def __init__(self, threadID, name, axle, m_tics, radius):
 		threading.Thread.__init__(self)
 		self.threadID = threadID
 		self.name = name
@@ -468,25 +483,66 @@ class ReadControls(threading.Thread):
 		self.sched.start()        # start the scheduler
 		self.x = 0
 		self.y = 0
-		self.max_speed = 180
-		self.subscriber = rospy.Subscriber("/joy", Joy, self.callback)
+		self.max_speed = 140
+		# self.subscriber = rospy.Subscriber("/joy", Joy, self.callback_joy)
+		self.twist_subscriber = rospy.Subscriber("/cmd_vel", Twist, self.callback_twist)
 		self.last_received = rospy.Time.now()
 		self.mutex = Lock()
 		#check whether no command has been received
 		job = self.sched.add_interval_job(self.check_commands, seconds=0.2, args=[])
 		#job2 = self.sched.add_interval_job(self.sendMotionCommand, seconds = 1.5, args=[])
 
+		# axle
+		self.b = axle
+		self.m_tics = m_tics  # tics per meter
+		self.radius = radius
+		self.m_pro_rev = 2 * math.pi * self.radius  # distance travelled in one revolution
+		self.linear_vel_to_rpm = (1. / self.m_pro_rev) * 60. # transforms linear wheel speeds to the controller interface in rpm
+		self.vr = 0. # right wheel vel in m/s
+		self.vl = 0. # left wheel vel in m/s
+		
+
+
 	
 	def check_commands(self):
 		now = rospy.Time.now()
-		if now - self.last_received > 100:
+		if now.to_sec() - self.last_received.to_sec() > 0.200:
 			self.mutex.acquire()
 			self.x = 0
 			self.y = 0
+			self.vl = 0
+			self.vr = 0
 			self.mutex.release()
 
+	
+	def twist_to_velocities(self, twist):
+		vx = twist.linear.x
+		vtheta = twist.angular.z
 
-	def callback(self,msg):
+		# turning
+		if vx == 0.:
+			vr = vtheta * self.b / 2.
+			vl = -vr
+		elif vtheta == 0.:
+			vl = vx
+			vr = vx
+		else:
+			vl = vx - vtheta * self.b / 2.
+			vr = vx + vtheta * self.b / 2.
+
+		return (vl * self.linear_vel_to_rpm, vr * self.linear_vel_to_rpm)
+	
+	
+	def callback_twist(self, msg):
+
+		self.last_received = rospy.Time.now()
+		(vl, vr) = self.twist_to_velocities(msg)
+		self.mutex.acquire()
+		self.vl = vl
+		self.vr = vr
+		self.mutex.release()
+
+	def callback_joy(self,msg):
 		
 		self.last_received = rospy.Time.now()
 		#print msg.axes
@@ -496,6 +552,9 @@ class ReadControls(threading.Thread):
 		self.x = int(leftOut)
 		self.y = int(rightOut)
 		self.mutex.release()
+	
+	def get_wheel_rpms(self):
+		return (self.vl, self.vr)
 
 	def getCommand(self):
 		return (self.y, self.x)
@@ -521,6 +580,20 @@ class ReadControls(threading.Thread):
 	def run(self):
 		while not rospy.is_shutdown():
 			self.mutex.acquire()
+			(vl, vr) = self.get_wheel_rpms()
+			print vl, vr
+			self.mutex.release()
+			motor1 = struct.pack('f', vl)
+			motor2 = struct.pack('f', vr)
+
+			ser.write('SX')
+			ser.write( motor1 )
+			ser.write( motor2 )
+			sleep(0.03)
+
+	def run_joy(self):
+		while not rospy.is_shutdown():
+			self.mutex.acquire()
 			cmd = self.getCommand()
 			#cmd = (+125, +125)
 			self.mutex.release()
@@ -541,6 +614,11 @@ if __name__ == '__main__':
 	ser = serial.Serial('/dev/arduino',115200,timeout=10) # open serial port	
 	print(ser.name)
 	sleep(2)
+
+	# Robot parameters
+	axle = 0.174 # wheels separation; should be read from urdf or config file
+	m_tic = 0.00038  # empirical value meters per tic | 2pi*0.04 / 255 =  0.00098559769
+	radius = 0.023
 	
 	#read the version data
 	version = 20
@@ -560,10 +638,10 @@ if __name__ == '__main__':
 	# reads and stores encoder + IMU data
 	threadEncoder = encoderThread(1, "Thread-encoder", ser, mutex)
 	# computes odometry data from the data stored by the encoderThread
-	threadOdom = odometryThread(2,"Thread-odometry", threadEncoder,odometryPublisher, mutex)
+	threadOdom = odometryThread(2,"Thread-odometry", threadEncoder,odometryPublisher, mutex, axle, m_tic)
 	
-	# subscribes to /joy commands
-	readControls = ReadControls(3, 'Thread-readcontrols')
+	# subscribes to /cmd_vel commands
+	readControls = ReadControls(3, 'Thread-readcontrols', axle, m_tic, radius )
 		
 	#start the threads
 	threadEncoder.start()

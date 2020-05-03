@@ -581,7 +581,7 @@ class ReadControls(threading.Thread):
 		while not rospy.is_shutdown():
 			self.mutex.acquire()
 			(vl, vr) = self.get_wheel_rpms()
-			print vl, vr
+			# print vl, vr
 			self.mutex.release()
 			motor1 = struct.pack('f', vl)
 			motor2 = struct.pack('f', vr)

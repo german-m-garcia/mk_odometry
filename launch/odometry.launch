@@ -1,4 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-	<node name="odometry" pkg="mk_odometry" type="odometry.py" output="screen"/>
+	<arg name="use_ext_odom_publisher" value="False"/>
+
+	<node name="mk_odometry" pkg="mk_odometry" type="odometry.py" output="screen">
+		<param name="velocity" type="int" value="120"/>
+
+		<!-- Odometry Thread-->
+		<param name="publish_odom_tf" type="bool" value="False"/>
+		<param name="publish_odom" type="bool" value="True"/>
+		<param name="publish_odom_only_velocity" type="bool" value="False"/>
+		<param name="publish_imu" type="bool" value="True"/>
+		<param name="publish_encoders" type="bool" value="True"/>
+		<!-- calibrated values -->
+		<param name="ticks_per_meter" type="double" value="2864"/>
+		<param name="wheel_separation" type="double" value="0.15"/>
+		<param name="radius" type="double" value="0.02"/>
+	</node>
+
+
+	<!-- calibrated values -->
+	<arg name="ticks_per_meter" value="2864" />
+    <arg name="wheel_separation" value="0.15" />
+    <arg name="odom_frame_id" value="world" />
+    <arg name="base_frame_id" value="odom" />
+    <arg name="rate" value="50" />
+	<node name="odom_publisher" pkg="diff_drive" type="diff_drive_odometry" output="screen" if="$(arg use_ext_odom_publisher)">
+    	
+    	<param name="ticks_per_meter" value="$(arg ticks_per_meter)"/>
+    	<param name="wheel_separation" value="$(arg wheel_separation)"/>
+        <param name="odom_frame_id" value="$(arg odom_frame_id)"/>
+        <param name="rate" value="$(arg rate)"/>
+        <param name="base_frame_id" value="$(arg base_frame_id)"/>
+        
+        <remap  from="/lwheel_ticks" to="/makeblock/lwheel"/>
+        <remap  from="/rwheel_ticks" to="/makeblock/rwheel"/>
+    </node>
 </launch>

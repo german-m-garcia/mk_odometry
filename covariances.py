@@ -26,6 +26,14 @@ ODOM_COV_IMU= [ 4e-4, 0, 0,
 			    0, 4e-4, 0,
 			    0, 0, 4e-4]
 			    
-TWIST_COV_IMU= [ 4e-4, 0, 0,
+ORIENTATION_COV_IMU = [-1, 0, 0,
+						0, 0, 0,
+						0 ,0, 0 ]
+
+ANGULAR_VEL_COV_IMU= [ 4e-4, 0, 0,
+				0, 4e-4, 0,
+				0, 0, 4e-4]
+
+ACCELERATION_COV_IMU= [ 4e-4, 0, 0,
 			    0, 4e-4, 0,
 			    0, 0, 4e-4]

@@ -16,7 +16,8 @@ import threading
 import time
 import math
 from time import sleep
-from apscheduler.scheduler import Scheduler
+#from apscheduler.scheduler import Scheduler
+from apscheduler.schedulers.background import BackgroundScheduler
 import logging
 
 # imports for ROS odometry
@@ -28,14 +29,12 @@ import PyKDL as kdl
 # Messages
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Point, Quaternion, Twist
-from gamecontrol.msg import Motioncmd
+# from gamecontrol.msg import Motioncmd
 from mk_odometry.msg import Encoder
 from sensor_msgs.msg import JointState
 
 from sensor_msgs.msg import Imu
 from sensor_msgs.msg import Joy
-
-from std_msgs.msg import Int32
 
 # to register  an exit function
 import atexit
@@ -117,9 +116,9 @@ class RosOdomPublisher:
         #self.imu_pub = rospy.Publisher('/makeblock/imu', Imu, queue_size=10)
         self.imu_pub = rospy.Publisher('/imu', Imu, queue_size=10)
         self.lwheel_pub = rospy.Publisher(
-            '/makeblock/lwheel', Int32, queue_size=10)
+            '/makeblock/lwheel', Encoder, queue_size=10)
         self.rwheel_pub = rospy.Publisher(
-            '/makeblock/rwheel', Int32, queue_size=10)
+            '/makeblock/rwheel', Encoder, queue_size=10)
         self.tf_br = tf.TransformBroadcaster()
 
         self.publish_odom_tf = rospy.get_param('~publish_odom_tf', False)
@@ -130,15 +129,17 @@ class RosOdomPublisher:
         self.vx = self.vy = self.x = self.y = self.z = 0
         self.w = self.theta = 0
 
-        self.encoder_msg_l = Int32()
-        self.encoder_msg_r = Int32()
+        self.encoder_msg_l = Encoder()
+        self.encoder_msg_r = Encoder()
+        self.encoder_msg_l.header.frame_id = self.child_frame_id 
+        self.encoder_msg_r.header.frame_id = self.child_frame_id 
 
         self.imu_msg = Imu()
         self.imu_frame_id = "imu"
 
         # Joint States
         self.joint_state_publisher = rospy.Publisher(
-            '~joint_states', JointState)
+            '/joint_states', JointState)
         self.jsmsg = JointState()
 
         self.jsmsg.name = ['base_to_lwheel', 'base_to_rwheel']
@@ -162,6 +163,7 @@ class RosOdomPublisher:
         self.jsmsg.position[1] = rRads
         self.jsmsg.velocity[1] = 0
         self.jsmsg.effort[1] = 0
+        # print('publishing  lRads, rRads =', self.jsmsg.position[0], self.jsmsg.position[1], ' self.jsmsg.name=', self.jsmsg.name )
 
         self.jsmsg.header.stamp = rospy.Time.now()
         self.jsmsg.header.frame_id = 'base_link'
@@ -169,20 +171,24 @@ class RosOdomPublisher:
 
     def publish_wheel_encoders(self, rwheel, lwheel):
 
-        self.encoder_msg_l.data = lwheel
-        self.encoder_msg_r.data = rwheel
-
+        self.encoder_msg_l.ticks = lwheel
+        self.encoder_msg_r.ticks = rwheel
+        self.encoder_msg_r.header.stamp = rospy.Time.now()
+        self.encoder_msg_l.header.stamp = self.encoder_msg_r.header.stamp
+        
         self.lwheel_pub.publish(self.encoder_msg_l)
         self.rwheel_pub.publish(self.encoder_msg_r)
+        # print("encoders: ", lwheel, rwheel)
 
     # Accelerations should be in m/s^2 (not in g's), and rotational velocity should be in rad/sec
     def publish_imu(self, rotX, rotY, rotZ, accX, accY, accZ):
-
         self.imu_msg.header.stamp = rospy.Time.now()
         self.imu_msg.header.frame_id = self.imu_frame_id  # i.e. '/base_link'
 
+
         #imu_msg.orientation = Quaternion(*(kdl.Rotation.RPY(roll, pitch, yaw).GetQuaternion()))
         self.imu_msg.orientation_covariance = covariances.ORIENTATION_COV_IMU
+
         #print 'imu_msg.orientation_covariance'
         # conversions
         gravity = 9.8
@@ -192,20 +198,21 @@ class RosOdomPublisher:
         self.imu_msg.angular_velocity.y = rotY * degreesToRad
         self.imu_msg.angular_velocity.z = rotZ * degreesToRad
 
+        
+        
         self.imu_msg.angular_velocity_covariance = covariances.ANGULAR_VEL_COV_IMU
-        #print 'imu_msg.angular_velocity_covariance'
+
 
         self.imu_msg.linear_acceleration.x = accX * gravity
         self.imu_msg.linear_acceleration.y = accY * gravity
         self.imu_msg.linear_acceleration.z = accZ * gravity
         self.imu_msg.linear_acceleration_covariance = covariances.ACCELERATION_COV_IMU
 
-        # print 'publishing imu ', rotX, rotY, rotZ, accX, accY, accZ
+        # print ('publishing imu ', rotX, rotY, rotZ, accX, accY, accZ)
 
         self.imu_pub.publish(self.imu_msg)
 
     def publish_odom(self, x, y, theta, vx, vy, w):
-
         msg = Odometry()
         msg.header.stamp = rospy.Time.now()
         msg.header.frame_id = self.frame_id  # i.e. '/odom'
@@ -241,6 +248,8 @@ class RosOdomPublisher:
         msg.twist.twist.angular.z = self.w
         msg.twist.covariance = covariances.TWIST_COV_WHEEL
 
+        
+
         # Publish odometry message
         self.odom_pub.publish(msg)
 
@@ -248,6 +257,7 @@ class RosOdomPublisher:
         if self.publish_odom_tf:
             self.tf_br.sendTransform(
                 pos, ori, msg.header.stamp, msg.child_frame_id, msg.header.frame_id)
+
 
 
 """
@@ -268,7 +278,7 @@ class odometryThread(threading.Thread):
         threading.Thread.__init__(self)
         self.threadID = threadID
         self.name = name
-        self.sched = Scheduler()
+        self.sched = BackgroundScheduler()
         self.sched.start()        # start the scheduler
         self.encoder = encoder
         self.last_encoder_right = 0
@@ -342,16 +352,17 @@ class odometryThread(threading.Thread):
         print(rospy.resolve_name('~publish_odom'), self.doPublishOdom)
         print(rospy.resolve_name('~publish_imu'), self.doPublishImu)
         print(rospy.resolve_name('~publish_encoders'), self.doPublishEncoders)
-        print(rospy.resolve_name('~publish_joint_states'),
-              self.doPublishJointStates)
+        print(rospy.resolve_name('~publish_joint_states'), self.doPublishJointStates)
+        job = self.sched.add_job( self.updateTicks, 'interval', seconds=self.seconds, args=[])
 
     def updateTicks(self):
+
         self.mutex.acquire()
-        cur_encoder_right = self.encoder.getEnc1()  # -self.encoder.getEnc1()
-        cur_encoder_left = self.encoder.getEnc2()
-        self.encoder_pos_right = self.encoder.getAbsPos1()
-        self.encoder_pos_left = self.encoder.getAbsPos2()
-        # print cur_encoder_left, cur_encoder_right
+        cur_encoder_right = -self.encoder.getEnc2()  # -self.encoder.getEnc1()
+        cur_encoder_left = self.encoder.getEnc1()
+        self.encoder_pos_right = self.encoder.getAbsPos2()
+        self.encoder_pos_left = self.encoder.getAbsPos1()
+        # print('self.encoder_pos_right= ', self.encoder_pos_right, " self.encoder_pos_left=", self.encoder_pos_left)
         self.mutex.release()
         now = rospy.get_rostime()
         diff = now - self.last_timestamp
@@ -392,9 +403,8 @@ class odometryThread(threading.Thread):
         self.ticks_left = (cur_encoder_left + self.acc_ticks_left *
                            (self.encoder_max - self.encoder_min))
         self.last_encoder_left = cur_encoder_left
-
         self.updateOdometry()
-
+        
         if self.doPublishOdom:
 
             if self.doPublishOdomOnlyVelocity:
@@ -415,6 +425,7 @@ class odometryThread(threading.Thread):
         if self.doPublishImu:
             self.rosOdometry.publish_imu(
                 self.roll, self.pitch, self.yaw, self.imu_vroll, self.imu_vpitch, self.imu_vyaw)
+
         if self.doPublishEncoders:
             self.rosOdometry.publish_wheel_encoders(
                 self.ticks_right, self.ticks_left)
@@ -471,10 +482,10 @@ class odometryThread(threading.Thread):
         # self.imu_vyaw = (self.yaw - self.imu_last_yaw) / self.seconds
         # self.imu_last_yaw = self.yaw
 
-    def run(self):
-        #job = self.sched.add_interval_job(self.updateTicks, seconds=0.04, args=[])
-        job = self.sched.add_interval_job(
-            self.updateTicks, seconds=self.seconds, args=[])
+    # def run(self):
+        
+        #job = self.sched.add_job(
+        #    self.updateTicks, 'interval', seconds=self.seconds, args=[])
 
 
 class encoderThread (threading.Thread):
@@ -571,15 +582,30 @@ class encoderThread (threading.Thread):
         while not rospy.is_shutdown():
 
             n = ser.inWaiting()
+            # print('encoder thread, ', n, ' bytes available')
             while n < 10:
                 n = ser.inWaiting()
 
             # print n, ' available bytes '
+            seq1 = ser.read(1)
+            seq2= ser.read(1)
+            # print( 'seq1=', seq1, ' seq2=', seq2)
+            while seq1 != b'T' and seq2 != b'X':
+                
+                n = ser.inWaiting()
+                while n < 2:
+                    n = ser.inWaiting()
+
+                seq1 = ser.read(1)
+                seq2 = ser.read(1)
+                
+                print( 'Skipping bytes... seq1=', seq1, ' seq2=', seq2,' bytes available=', n)
+            
             self.mutex.acquire()
             self.encoder1 = self.readEncoder()
             self.encoder2 = self.readEncoder()
             self.mutex.release()
-            # print 'right (encoder1)',self.encoder1 , 'left(encoder2) ', self.encoder2
+            # print ('right (encoder1)',self.encoder1 , 'left(encoder2) ', self.encoder2)
 
             n = ser.inWaiting()
             while n < 10:
@@ -616,7 +642,7 @@ class encoderThread (threading.Thread):
             self.accY = self.readAngle()
             self.accZ = self.readAngle()
             self.mutex.release()
-            # print 'accelerations ', self.accX, self.accY, self.accZ
+            # print ('accelerations x=', self.accX, ' y=', self.accY, ' z=',self.accZ)
 
             # print 'abs pos | right=', self.encoderPos1, 'left=', self.encoderPos2
 
@@ -629,7 +655,7 @@ class ReadControls(threading.Thread):
         threading.Thread.__init__(self)
         self.threadID = threadID
         self.name = name
-        self.sched = Scheduler()
+        self.sched = BackgroundScheduler()
         self.sched.start()        # start the scheduler
         self.x = 0
         self.y = 0
@@ -641,9 +667,9 @@ class ReadControls(threading.Thread):
         self.last_received = rospy.Time.now()
         self.mutex = Lock()
         # check whether no command has been received
-        job = self.sched.add_interval_job(
-            self.check_commands, seconds=0.2, args=[])
-        #job2 = self.sched.add_interval_job(self.sendMotionCommand, seconds = 1.5, args=[])
+        job = self.sched.add_job(
+            self.check_commands, 'interval', seconds=0.2, args=[])
+        #job2 = self.sched.add_job(self.sendMotionCommand, seconds = 1.5, args=[])
 
         # axle
         self.b = axle
@@ -670,9 +696,9 @@ class ReadControls(threading.Thread):
             self.mutex.release()
 
     def twist_to_velocities(self, twist):
+        
         vx = twist.linear.x
         vtheta = twist.angular.z
-        # print 'twist=', vx, vtheta
 
         # turning
         if vx == 0.:
@@ -684,8 +710,6 @@ class ReadControls(threading.Thread):
         else:
             vl = vx - vtheta * self.b / 2.
             vr = vx + vtheta * self.b / 2.
-
-        # print 'motor rpms ',vl * self.linear_vel_to_rpm, vr * self.linear_vel_to_rpm
 
         return (vl * self.linear_vel_to_rpm, vr * self.linear_vel_to_rpm)
 
@@ -709,17 +733,12 @@ class ReadControls(threading.Thread):
         if speedUp == 1:
             if self.max_speed < self.hard_coded_max_speed:
                 self.max_speed = self.max_speed + 1
-                print 'speed Up: ', self.max_speed
+                print ('speed Up: ', self.max_speed)
 
         elif speedDown == 1:
             if self.max_speed > 0:
                 self.max_speed = self.max_speed - 1
-                print 'speed Down: ', self.max_speed
-
-        self.mutex.acquire()
-        #self.x = int(leftOut)
-        #self.y = int(rightOut)
-        self.mutex.release()
+                print ('speed Down: ', self.max_speed)
 
     def get_wheel_rpms(self):
         return (self.vl, self.vr)
@@ -746,9 +765,9 @@ class ReadControls(threading.Thread):
         return struct.unpack('f', angle)[0]
 
     def run(self):
-        print 'letting the IMU autocalibrate... No not move the robot!'
-        sleep(2)
-        print 'starting!'
+        print ('letting the IMU autocalibrate... No not move the robot!')
+        sleep(4)
+        print ('ReadControls Thread: starting sending motion commands!')
         while not rospy.is_shutdown():
             self.mutex.acquire()
             (vl, vr) = self.get_wheel_rpms()
@@ -757,7 +776,7 @@ class ReadControls(threading.Thread):
             motor1 = struct.pack('f', vl)
             motor2 = struct.pack('f', vr)
 
-            ser.write('SX')
+            ser.write(str.encode('SX'))
             ser.write(motor1)
             ser.write(motor2)
             sleep(0.03)
@@ -771,7 +790,7 @@ class ReadControls(threading.Thread):
             motor1 = struct.pack('h', cmd[1])
             motor2 = struct.pack('h', cmd[0])
 
-            ser.write('SX')
+            ser.write(str.encode('SX'))
             ser.write(motor1)
             ser.write(motor2)
             sleep(0.03)
@@ -803,7 +822,7 @@ if __name__ == '__main__':
             # print  n,' bytes available'
             ser.read(n)
             read = read + n
-    print "version # read\n"
+    print ("version # read\n")
 
     # create the ROS odometry publisher
     odometryPublisher = RosOdomPublisher()

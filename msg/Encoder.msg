@@ -1,2 +1,2 @@
 Header header
-int16 ticks
+int32 ticks

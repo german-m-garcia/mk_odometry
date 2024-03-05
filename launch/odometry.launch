@@ -6,21 +6,21 @@
 		<param name="velocity" type="int" value="120"/>
 
 		<!-- Odometry Thread-->
-		<param name="publish_odom_tf" type="bool" value="False"/>
+		<param name="publish_odom_tf" type="bool" value="True"/>
 		<param name="publish_odom" type="bool" value="True"/>
 		<param name="publish_odom_only_velocity" type="bool" value="False"/>
 		<param name="publish_imu" type="bool" value="True"/>
 		<param name="publish_encoders" type="bool" value="True"/>
 		<!-- calibrated values -->
-		<param name="ticks_per_meter" type="double" value="2864"/>
-		<param name="wheel_separation" type="double" value="0.15"/>
+		<param name="ticks_per_meter" type="double" value="1876"/>
+		<param name="wheel_separation" type="double" value="0.153682"/>
 		<param name="radius" type="double" value="0.02"/>
 	</node>
 
 
 	<!-- calibrated values -->
-	<arg name="ticks_per_meter" value="2864" />
-    <arg name="wheel_separation" value="0.15" />
+	<arg name="ticks_per_meter" value="1876" />
+    <arg name="wheel_separation" value="0.153682" />
     <arg name="odom_frame_id" value="world" />
     <arg name="base_frame_id" value="odom" />
     <arg name="rate" value="50" />

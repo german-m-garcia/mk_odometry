@@ -1,3 +1,3 @@
 # mk_odometry
 
-ros-makeblock odometry node.
+mk-ros control node.
